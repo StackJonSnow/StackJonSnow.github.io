@@ -20,30 +20,34 @@
     var CONFIG = {"hostname":"stackjonsnow.github.io","root":"/StackJonSnow.github.io/","scheme":"Mist","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":false,"show_result":false,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":false},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":false,"mediumzoom":false,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
   </script>
 
-  <meta name="description" content="尽人事，听天命">
-<meta property="og:type" content="website">
-<meta property="og:title" content="莲花坞">
-<meta property="og:url" content="https://stackjonsnow.github.io/index.html">
+  <meta name="description" content="问题描述：相信大家在阅读 HashMap 源代码的时候都会有一个疑问，HashMap 定义了 keySet，entrySet 用来存储 HashMap 的 key 及 entry 视图，但是翻遍了源代码就是没发现这两个成员变量是在哪里同步 HashMap 的 key 和 entry 的，下面就以 keySet 为例来分析Key视图的设计原理 1. HashMap 中 keySet 的声明及获取代码">
+<meta property="og:type" content="article">
+<meta property="og:title" content="揭秘Map的Key视图及Entry视图设计原理">
+<meta property="og:url" content="https://stackjonsnow.github.io/2020/03/31/hashmap-code-1/index.html">
 <meta property="og:site_name" content="莲花坞">
-<meta property="og:description" content="尽人事，听天命">
+<meta property="og:description" content="问题描述：相信大家在阅读 HashMap 源代码的时候都会有一个疑问，HashMap 定义了 keySet，entrySet 用来存储 HashMap 的 key 及 entry 视图，但是翻遍了源代码就是没发现这两个成员变量是在哪里同步 HashMap 的 key 和 entry 的，下面就以 keySet 为例来分析Key视图的设计原理 1. HashMap 中 keySet 的声明及获取代码">
 <meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://stackjonsnow.github.io/images/me.png">
+<meta property="article:published_time" content="2020-03-31T08:11:44.937Z">
+<meta property="article:modified_time" content="2020-04-01T08:32:32.764Z">
 <meta property="article:author" content="飞羽琼霄">
 <meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://stackjonsnow.github.io/images/me.png">
 
-<link rel="canonical" href="https://stackjonsnow.github.io/">
+<link rel="canonical" href="https://stackjonsnow.github.io/2020/03/31/hashmap-code-1/">
 
 
 <script id="page-configurations">
   // https://hexo.io/docs/variables.html
   CONFIG.page = {
     sidebar: "",
-    isHome : true,
-    isPost : false,
+    isHome : false,
+    isPost : true,
     lang   : 'zh-CN'
   };
 </script>
 
-  <title>莲花坞</title>
+  <title>揭秘Map的Key视图及Entry视图设计原理 | 莲花坞</title>
   
 
 
@@ -187,9 +191,10 @@
         <div class="content-wrap">
           
 
-          <div class="content index posts-expand">
+          <div class="content post posts-expand">
             
-      
+
+    
   
   
   <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
@@ -205,10 +210,9 @@
       <meta itemprop="name" content="莲花坞">
     </span>
       <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          
-            <a href="/StackJonSnow.github.io/2020/03/31/hashmap-code-1/" class="post-title-link" itemprop="url">揭秘Map的Key视图及Entry视图设计原理</a>
-        </h2>
+        <h1 class="post-title" itemprop="name headline">
+          揭秘Map的Key视图及Entry视图设计原理
+        </h1>
 
         <div class="post-meta">
             <span class="post-meta-item">
@@ -247,7 +251,7 @@
     <div class="post-body" itemprop="articleBody">
 
       
-          <p>问题描述：相信大家在阅读 HashMap 源代码的时候都会有一个疑问，HashMap 定义了 keySet，entrySet 用来存储 HashMap 的 key 及 entry 视图，但是翻遍了源代码就是没发现这两个成员变量是在哪里同步 HashMap 的 key 和 entry 的，下面就以 keySet 为例来分析Key视图的设计原理</p>
+        <p>问题描述：相信大家在阅读 HashMap 源代码的时候都会有一个疑问，HashMap 定义了 keySet，entrySet 用来存储 HashMap 的 key 及 entry 视图，但是翻遍了源代码就是没发现这两个成员变量是在哪里同步 HashMap 的 key 和 entry 的，下面就以 keySet 为例来分析Key视图的设计原理</p>
 <h3 id="1-HashMap-中-keySet-的声明及获取代码"><a href="#1-HashMap-中-keySet-的声明及获取代码" class="headerlink" title="1. HashMap 中 keySet 的声明及获取代码"></a>1. HashMap 中 keySet 的声明及获取代码</h3><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">&#x2F;&#x2F; key 集合成员变量声明</span><br><span class="line">transient Set&lt;K&gt;        keySet;</span><br><span class="line"></span><br><span class="line">&#x2F;&#x2F; 获取 key 集合视图</span><br><span class="line">public Set&lt;K&gt; keySet() &#123;</span><br><span class="line">    Set&lt;K&gt; ks &#x3D; keySet;</span><br><span class="line">    if (ks &#x3D;&#x3D; null) &#123;</span><br><span class="line">        &#x2F;&#x2F; 创建了 KeySet 对象，可能在构造器中同步了 HashMap 的所有 key</span><br><span class="line">        ks &#x3D; new KeySet();</span><br><span class="line">        keySet &#x3D; ks;</span><br><span class="line">    &#125;</span><br><span class="line">    return ks;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
 
 <p>直接调用 keySet() 方法就可以返回当前 hashmap 的 key 视图，但是没有看到忘 keyset 中存储 hashmap 所有 key 的代码，于是只能看下 KeySet 中是否有同步数据的代码。</p>
@@ -267,21 +271,23 @@
 <h3 id="写在最后，做了一个实践"><a href="#写在最后，做了一个实践" class="headerlink" title="写在最后，做了一个实践"></a>写在最后，做了一个实践</h3><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br></pre></td><td class="code"><pre><span class="line">static class MySet&lt;E&gt; extends AbstractSet&lt;E&gt; &#123;</span><br><span class="line"></span><br><span class="line">    private Iterator&lt;E&gt; iterator;</span><br><span class="line"></span><br><span class="line">    public MySet(Iterator&lt;E&gt; iterator) &#123;</span><br><span class="line">        this.iterator &#x3D; iterator;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    @Override</span><br><span class="line">    public Iterator&lt;E&gt; iterator() &#123;</span><br><span class="line">        return iterator;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    @Override</span><br><span class="line">    public int size() &#123;</span><br><span class="line">        return 0;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">public static void main(String[] args) &#123;</span><br><span class="line">    List&lt;String&gt; list &#x3D; new ArrayList&lt;&gt;();</span><br><span class="line">    list.add(&quot;1&quot;);</span><br><span class="line">    list.add(&quot;2&quot;);</span><br><span class="line">    list.add(&quot;3&quot;);</span><br><span class="line">    </span><br><span class="line">    MySet&lt;String&gt; mySet &#x3D; new MySet&lt;&gt;(list.iterator());</span><br><span class="line">    </span><br><span class="line">    System.out.println(mySet);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
 <p><img src="/images/me.png" alt="截屏2020-03-31下午5.24.34"><br>在 AbstractCollection 中重写的 toString() 也是使用的迭代器，所以，这里直接可以打印到控制台。</p>
 
-      
     </div>
 
     
     
     
+
       <footer class="post-footer">
-        <div class="post-eof"></div>
+
+        
+
+
+        
       </footer>
+    
   </article>
   
   
-  
-
-
   
 
 
@@ -334,6 +340,7 @@
 
       <!--noindex-->
       <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-3"><a class="nav-link" href="#1-HashMap-中-keySet-的声明及获取代码"><span class="nav-number">1.</span> <span class="nav-text">1. HashMap 中 keySet 的声明及获取代码</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#2-KeySet-定义"><span class="nav-number">2.</span> <span class="nav-text">2.KeySet 定义</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#总结"><span class="nav-number">3.</span> <span class="nav-text">总结</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#写在最后，做了一个实践"><span class="nav-number">4.</span> <span class="nav-text">写在最后，做了一个实践</span></a></li></ol></div>
       </div>
       <!--/noindex-->
 
