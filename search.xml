@@ -4,24 +4,149 @@
     <title>揭秘Map的Key视图及Entry视图设计原理</title>
     <url>/StackJonSnow.github.io/2020/03/31/hashmap-code-1/</url>
     <content><![CDATA[<p>问题描述：相信大家在阅读 HashMap 源代码的时候都会有一个疑问，HashMap 定义了 keySet，entrySet 用来存储 HashMap 的 key 及 entry 视图，但是翻遍了源代码就是没发现这两个成员变量是在哪里同步 HashMap 的 key 和 entry 的，下面就以 keySet 为例来分析Key视图的设计原理</p>
-<h3 id="1-HashMap-中-keySet-的声明及获取代码"><a href="#1-HashMap-中-keySet-的声明及获取代码" class="headerlink" title="1. HashMap 中 keySet 的声明及获取代码"></a>1. HashMap 中 keySet 的声明及获取代码</h3><figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">&#x2F;&#x2F; key 集合成员变量声明</span><br><span class="line">transient Set&lt;K&gt;        keySet;</span><br><span class="line"></span><br><span class="line">&#x2F;&#x2F; 获取 key 集合视图</span><br><span class="line">public Set&lt;K&gt; keySet() &#123;</span><br><span class="line">    Set&lt;K&gt; ks &#x3D; keySet;</span><br><span class="line">    if (ks &#x3D;&#x3D; null) &#123;</span><br><span class="line">        &#x2F;&#x2F; 创建了 KeySet 对象，可能在构造器中同步了 HashMap 的所有 key</span><br><span class="line">        ks &#x3D; new KeySet();</span><br><span class="line">        keySet &#x3D; ks;</span><br><span class="line">    &#125;</span><br><span class="line">    return ks;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="1-HashMap-中-keySet-的声明及获取代码"><a href="#1-HashMap-中-keySet-的声明及获取代码" class="headerlink" title="1. HashMap 中 keySet 的声明及获取代码"></a>1. HashMap 中 keySet 的声明及获取代码</h3><pre><code>// key 集合成员变量声明
+transient Set&lt;K&gt;        keySet;
 
-<p>直接调用 keySet() 方法就可以返回当前 hashmap 的 key 视图，但是没有看到忘 keyset 中存储 hashmap 所有 key 的代码，于是只能看下 KeySet 中是否有同步数据的代码。</p>
-<h3 id="2-KeySet-定义"><a href="#2-KeySet-定义" class="headerlink" title="2.KeySet 定义"></a>2.KeySet 定义</h3><figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">&#x2F;&#x2F; key 视图定义</span><br><span class="line">final class KeySet extends AbstractSet&lt;K&gt; &#123;</span><br><span class="line">    public final int size()                 &#123; return size; &#125;</span><br><span class="line">    public final void clear()               &#123; HashMap.this.clear(); &#125;</span><br><span class="line">    </span><br><span class="line">    &#x2F;&#x2F; 构造器中也没有同步数据的代码，看迭代器中能不能发现什么</span><br><span class="line">    public final Iterator&lt;K&gt; iterator()     &#123; return new KeyIterator(); &#125;</span><br><span class="line">    public final boolean contains(Object o) &#123; return containsKey(o); &#125;</span><br><span class="line">    public final boolean remove(Object key) &#123;</span><br><span class="line">        return removeNode(hash(key), key, null, false, true) !&#x3D; null;</span><br><span class="line">    &#125;</span><br><span class="line">    public final Spliterator&lt;K&gt; spliterator() &#123;</span><br><span class="line">        return new KeySpliterator&lt;&gt;(HashMap.this, 0, -1, 0, 0);</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    &#x2F;&#x2F; forEach 方法中似乎看到了一点线索，看到遍历的时候是直接使用外部类（即 hashmap）存储数据的数组</span><br><span class="line">    public final void forEach(Consumer&lt;? super K&gt; action) &#123;</span><br><span class="line">        Node&lt;K,V&gt;[] tab;</span><br><span class="line">        if (action &#x3D;&#x3D; null)</span><br><span class="line">            throw new NullPointerException();</span><br><span class="line">        &#x2F;&#x2F; 这里将 hashmap 的 table 赋值给了 tab，证明这里遍历的其实就是 hashmap</span><br><span class="line">        if (size &gt; 0 &amp;&amp; (tab &#x3D; table) !&#x3D; null) &#123;</span><br><span class="line">            int mc &#x3D; modCount;</span><br><span class="line">            for (int i &#x3D; 0; i &lt; tab.length; ++i) &#123;</span><br><span class="line">                for (Node&lt;K,V&gt; e &#x3D; tab[i]; e !&#x3D; null; e &#x3D; e.next)</span><br><span class="line">                    action.accept(e.key);</span><br><span class="line">            &#125;</span><br><span class="line">            if (modCount !&#x3D; mc)</span><br><span class="line">                throw new ConcurrentModificationException();</span><br><span class="line">        &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>KeySet 构造器中也没有同步数据相关代码，意外看到 forEach() 中其实就是遍历 hashmap，那么是否迭代器也是在遍历 hashmap 呢。（增强 for 循环遍历集合类型对象时其实使用的就是迭代器）</p>
+// 获取 key 集合视图
+public Set&lt;K&gt; keySet() {
+    Set&lt;K&gt; ks = keySet;
+    if (ks == null) {
+        // 创建了 KeySet 对象，可能在构造器中同步了 HashMap 的所有 key
+        ks = new KeySet();
+        keySet = ks;
+    }
+    return ks;
+}
+</code></pre><p>直接调用 keySet() 方法就可以返回当前 hashmap 的 key 视图，但是没有看到忘 keyset 中存储 hashmap 所有 key 的代码，于是只能看下 KeySet 中是否有同步数据的代码。</p>
+<h3 id="2-KeySet-定义"><a href="#2-KeySet-定义" class="headerlink" title="2.KeySet 定义"></a>2.KeySet 定义</h3><pre><code>// key 视图定义
+final class KeySet extends AbstractSet&lt;K&gt; {
+    public final int size()                 { return size; }
+    public final void clear()               { HashMap.this.clear(); }
+
+    // 构造器中也没有同步数据的代码，看迭代器中能不能发现什么
+    public final Iterator&lt;K&gt; iterator()     { return new KeyIterator(); }
+    public final boolean contains(Object o) { return containsKey(o); }
+    public final boolean remove(Object key) {
+        return removeNode(hash(key), key, null, false, true) != null;
+    }
+    public final Spliterator&lt;K&gt; spliterator() {
+        return new KeySpliterator&lt;&gt;(HashMap.this, 0, -1, 0, 0);
+    }
+
+    // forEach 方法中似乎看到了一点线索，看到遍历的时候是直接使用外部类（即 hashmap）存储数据的数组
+    public final void forEach(Consumer&lt;? super K&gt; action) {
+        Node&lt;K,V&gt;[] tab;
+        if (action == null)
+            throw new NullPointerException();
+        // 这里将 hashmap 的 table 赋值给了 tab，证明这里遍历的其实就是 hashmap
+        if (size &gt; 0 &amp;&amp; (tab = table) != null) {
+            int mc = modCount;
+            for (int i = 0; i &lt; tab.length; ++i) {
+                for (Node&lt;K,V&gt; e = tab[i]; e != null; e = e.next)
+                    action.accept(e.key);
+            }
+            if (modCount != mc)
+                throw new ConcurrentModificationException();
+        }
+}</code></pre><p>KeySet 构造器中也没有同步数据相关代码，意外看到 forEach() 中其实就是遍历 hashmap，那么是否迭代器也是在遍历 hashmap 呢。（增强 for 循环遍历集合类型对象时其实使用的就是迭代器）</p>
 <p>3.KeyIterator 定义</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">final class KeyIterator extends HashIterator</span><br><span class="line">    implements Iterator&lt;K&gt; &#123;</span><br><span class="line">    public final K next() &#123; return nextNode().key; &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<pre><code>final class KeyIterator extends HashIterator
+    implements Iterator&lt;K&gt; {
+    public final K next() { return nextNode().key; }
+}</code></pre><p>调用 nextNode() 实现遍历，继续看 nextNode() 代码</p>
+<pre><code>final Node&lt;K,V&gt; nextNode() {
+        Node&lt;K,V&gt;[] t;
+        // next 为 KeyIterator 的父类 HashIterator 中的成员变量
+        Node&lt;K,V&gt; e = next;
 
-<p>调用 nextNode() 实现遍历，继续看 nextNode() 代码</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">final Node&lt;K,V&gt; nextNode() &#123;</span><br><span class="line">        Node&lt;K,V&gt;[] t;</span><br><span class="line">        &#x2F;&#x2F; next 为 KeyIterator 的父类 HashIterator 中的成员变量</span><br><span class="line">        Node&lt;K,V&gt; e &#x3D; next;</span><br><span class="line">        </span><br><span class="line">        if (modCount !&#x3D; expectedModCount)</span><br><span class="line">            throw new ConcurrentModificationException();</span><br><span class="line">        if (e &#x3D;&#x3D; null)</span><br><span class="line">            throw new NoSuchElementException();</span><br><span class="line">        if ((next &#x3D; (current &#x3D; e).next) &#x3D;&#x3D; null &amp;&amp; (t &#x3D; table) !&#x3D; null) &#123;</span><br><span class="line">            do &#123;&#125; while (index &lt; t.length &amp;&amp; (next &#x3D; t[index++]) &#x3D;&#x3D; null);</span><br><span class="line">        &#125;</span><br><span class="line">        &#x2F;&#x2F; 这里其实就是返回父类中的 next</span><br><span class="line">        return e;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+        if (modCount != expectedModCount)
+            throw new ConcurrentModificationException();
+        if (e == null)
+            throw new NoSuchElementException();
+        if ((next = (current = e).next) == null &amp;&amp; (t = table) != null) {
+            do {} while (index &lt; t.length &amp;&amp; (next = t[index++]) == null);
+        }
+        // 这里其实就是返回父类中的 next
+        return e;
+}</code></pre><p>返回的是父类中的 next 成员变量，继续看父类 HashIterator 中的代码</p>
+<pre><code>abstract class HashIterator {
+    Node&lt;K,V&gt; next;        // next entry to return
+    Node&lt;K,V&gt; current;     // current entry
+    int expectedModCount;  // for fast-fail
+    int index;             // current slot
 
-<p>返回的是父类中的 next 成员变量，继续看父类 HashIterator 中的代码</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">abstract class HashIterator &#123;</span><br><span class="line">    Node&lt;K,V&gt; next;        &#x2F;&#x2F; next entry to return</span><br><span class="line">    Node&lt;K,V&gt; current;     &#x2F;&#x2F; current entry</span><br><span class="line">    int expectedModCount;  &#x2F;&#x2F; for fast-fail</span><br><span class="line">    int index;             &#x2F;&#x2F; current slot</span><br><span class="line"></span><br><span class="line">    HashIterator() &#123;</span><br><span class="line">        expectedModCount &#x3D; modCount;</span><br><span class="line">        &#x2F;&#x2F; 使用 hashmap 的 table</span><br><span class="line">        Node&lt;K,V&gt;[] t &#x3D; table;</span><br><span class="line">        current &#x3D; next &#x3D; null;</span><br><span class="line">        index &#x3D; 0;</span><br><span class="line">        &#x2F;&#x2F; hashmap 非空</span><br><span class="line">        if (t !&#x3D; null &amp;&amp; size &gt; 0) &#123; &#x2F;&#x2F; advance to first entry</span><br><span class="line">            &#x2F;&#x2F; 找到 hashmap 的 table 中第一个元素的位置，并将该位置存储的 entry 赋值给 next 进行初始化</span><br><span class="line">            do &#123;&#125; while (index &lt; t.length &amp;&amp; (next &#x3D; t[index++]) &#x3D;&#x3D; null);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    public final boolean hasNext() &#123;</span><br><span class="line">        return next !&#x3D; null;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    final Node&lt;K,V&gt; nextNode() &#123;</span><br><span class="line">        Node&lt;K,V&gt;[] t;</span><br><span class="line">        Node&lt;K,V&gt; e &#x3D; next;</span><br><span class="line">        if (modCount !&#x3D; expectedModCount)</span><br><span class="line">            throw new ConcurrentModificationException();</span><br><span class="line">        if (e &#x3D;&#x3D; null)</span><br><span class="line">            throw new NoSuchElementException();</span><br><span class="line">        if ((next &#x3D; (current &#x3D; e).next) &#x3D;&#x3D; null &amp;&amp; (t &#x3D; table) !&#x3D; null) &#123;</span><br><span class="line">            do &#123;&#125; while (index &lt; t.length &amp;&amp; (next &#x3D; t[index++]) &#x3D;&#x3D; null);</span><br><span class="line">        &#125;</span><br><span class="line">        return e;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    public final void remove() &#123;</span><br><span class="line">        Node&lt;K,V&gt; p &#x3D; current;</span><br><span class="line">        if (p &#x3D;&#x3D; null)</span><br><span class="line">            throw new IllegalStateException();</span><br><span class="line">        if (modCount !&#x3D; expectedModCount)</span><br><span class="line">            throw new ConcurrentModificationException();</span><br><span class="line">        current &#x3D; null;</span><br><span class="line">        K key &#x3D; p.key;</span><br><span class="line">        removeNode(hash(key), key, null, false, false);</span><br><span class="line">        expectedModCount &#x3D; modCount;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+    HashIterator() {
+        expectedModCount = modCount;
+        // 使用 hashmap 的 table
+        Node&lt;K,V&gt;[] t = table;
+        current = next = null;
+        index = 0;
+        // hashmap 非空
+        if (t != null &amp;&amp; size &gt; 0) { // advance to first entry
+            // 找到 hashmap 的 table 中第一个元素的位置，并将该位置存储的 entry 赋值给 next 进行初始化
+            do {} while (index &lt; t.length &amp;&amp; (next = t[index++]) == null);
+        }
+    }
 
-<p>从 HashIterator 构造器中可以看出 next 的初始值即为 hashmap 的 table 中存储的第一个元素，这就意味着使用 KeyIterator 实例是可以遍历 hashmap 的，到这里应该就真相大白了。</p>
+    public final boolean hasNext() {
+        return next != null;
+    }
+
+    final Node&lt;K,V&gt; nextNode() {
+        Node&lt;K,V&gt;[] t;
+        Node&lt;K,V&gt; e = next;
+        if (modCount != expectedModCount)
+            throw new ConcurrentModificationException();
+        if (e == null)
+            throw new NoSuchElementException();
+        if ((next = (current = e).next) == null &amp;&amp; (t = table) != null) {
+            do {} while (index &lt; t.length &amp;&amp; (next = t[index++]) == null);
+        }
+        return e;
+    }
+
+    public final void remove() {
+        Node&lt;K,V&gt; p = current;
+        if (p == null)
+            throw new IllegalStateException();
+        if (modCount != expectedModCount)
+            throw new ConcurrentModificationException();
+        current = null;
+        K key = p.key;
+        removeNode(hash(key), key, null, false, false);
+        expectedModCount = modCount;
+    }
+}</code></pre><p>从 HashIterator 构造器中可以看出 next 的初始值即为 hashmap 的 table 中存储的第一个元素，这就意味着使用 KeyIterator 实例是可以遍历 hashmap 的，到这里应该就真相大白了。</p>
 <h3 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h3><p>hashmap 的 keySet 与 entrySet 在遍历时其实使用的就是 hashmap 的 table，所以 keySet() 与 entrySet() 方法返回的对象叫做视图，一个对象的视图意味着只能用作遍历，查询而不能用于修改，如果 keySet 与 entrySet 本身需要存储数据的话，那就意味着可以通过某些方式修改hashmap存储的值，比如反射，当然完全可以通过拷贝的方式存储 hashmap 的数据副本来达到不影响 hashmap 的目的，但是假如这样做了，hashmap 占用的内存是不是要翻倍了呢，所以 jdk 一些 java 库里面的代码写的是真的经典！！！</p>
-<h3 id="写在最后，做了一个实践"><a href="#写在最后，做了一个实践" class="headerlink" title="写在最后，做了一个实践"></a>写在最后，做了一个实践</h3><figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">static class MySet&lt;E&gt; extends AbstractSet&lt;E&gt; &#123;</span><br><span class="line"></span><br><span class="line">    private Iterator&lt;E&gt; iterator;</span><br><span class="line"></span><br><span class="line">    public MySet(Iterator&lt;E&gt; iterator) &#123;</span><br><span class="line">        this.iterator &#x3D; iterator;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    @Override</span><br><span class="line">    public Iterator&lt;E&gt; iterator() &#123;</span><br><span class="line">        return iterator;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    @Override</span><br><span class="line">    public int size() &#123;</span><br><span class="line">        return 0;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">public static void main(String[] args) &#123;</span><br><span class="line">    List&lt;String&gt; list &#x3D; new ArrayList&lt;&gt;();</span><br><span class="line">    list.add(&quot;1&quot;);</span><br><span class="line">    list.add(&quot;2&quot;);</span><br><span class="line">    list.add(&quot;3&quot;);</span><br><span class="line">    </span><br><span class="line">    MySet&lt;String&gt; mySet &#x3D; new MySet&lt;&gt;(list.iterator());</span><br><span class="line">    </span><br><span class="line">    System.out.println(mySet);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p><img src="/images/hashmap-1.png" alt="截屏2020-03-31下午5.24.34"><br>在 AbstractCollection 中重写的 toString() 也是使用的迭代器，所以，这里直接可以打印到控制台。</p>
+<h3 id="写在最后，做了一个实践"><a href="#写在最后，做了一个实践" class="headerlink" title="写在最后，做了一个实践"></a>写在最后，做了一个实践</h3><pre><code>static class MySet&lt;E&gt; extends AbstractSet&lt;E&gt; {
+
+    private Iterator&lt;E&gt; iterator;
+
+    public MySet(Iterator&lt;E&gt; iterator) {
+        this.iterator = iterator;
+    }
+
+    @Override
+    public Iterator&lt;E&gt; iterator() {
+        return iterator;
+    }
+
+    @Override
+    public int size() {
+        return 0;
+    }
+}
+
+public static void main(String[] args) {
+    List&lt;String&gt; list = new ArrayList&lt;&gt;();
+    list.add("1");
+    list.add("2");
+    list.add("3");
+
+    MySet&lt;String&gt; mySet = new MySet&lt;&gt;(list.iterator());
+
+    System.out.println(mySet);
+}</code></pre><p><img src="/images/hashmap-1.png" alt="截屏2020-03-31下午5.24.34"><br>在 AbstractCollection 中重写的 toString() 也是使用的迭代器，所以，这里直接可以打印到控制台。</p>
 ]]></content>
       <categories>
         <category>jdk源码分析</category>
